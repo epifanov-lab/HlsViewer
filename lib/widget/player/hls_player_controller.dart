@@ -49,7 +49,7 @@ class HlsPlayerController {
 
         switch (type) {
           case VideoPlayerEvents.common_onHlsStreamEnded:
-            if (onPlaybackEnded != null) onPlaybackEnded(this);
+            onPlaybackEnded(this);
             break;
 
           case VideoPlayerEvents.common_onRenderedFirstFrame:
