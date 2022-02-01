@@ -29,10 +29,7 @@ class _AppState extends State<App> {
   @override
   Widget build(BuildContext context) {
     final globalNavigator = GlobalNavigator(navigatorKey: _navigatorKey);
-
-
     Future locatorFuture = setupLocator();
-
     return FutureBuilder(
       future: locatorFuture,
       builder: (BuildContext context, snapshot) {
@@ -43,7 +40,6 @@ class _AppState extends State<App> {
 }
 
 class AppView extends StatefulWidget {
-
   final GlobalKey<NavigatorState> navigatorKey;
 
   const AppView({Key? key, required this.navigatorKey}) : super(key: key);

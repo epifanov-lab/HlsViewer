@@ -27,26 +27,28 @@ class HlsViewerScreen extends StatelessWidget {
       width: double.infinity,
       height: double.infinity,
       child: HlsPlayerWidget(
+        key: const ValueKey('HlsPlayerWidget'),
         onViewCreated: (controller) {
+          print('HlsPlayerWidget.onViewCreated');
           controller.loadHls(testResource);
         },
         onRenderedFirstFrame: (controller) {
-
+          print('HlsPlayerWidget.onRenderedFirstFrame');
         },
         onPlaybackEnded: (controller) {
-
+          print('HlsPlayerWidget.onPlaybackEnded');
         },
         onProgressChangedCallback: (controller, currentTime) {
-
+          print('HlsPlayerWidget.onProgressChangedCallback: $currentTime');
         },
         onPlayerEventCallback: (controller, data) {
-
+          print('HlsPlayerWidget.onPlayerEventCallback: $data');
         },
         onPlayerExceptionCallback: (controller, exception) {
-
+          print('HlsPlayerWidget.onPlayerExceptionCallback: $exception');
         },
         onVideoResolutionReceived: (controller) {
-
+          print('HlsPlayerWidget.onVideoResolutionReceived');
         },
       ),
     );

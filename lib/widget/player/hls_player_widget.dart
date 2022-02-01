@@ -23,7 +23,7 @@ class HlsPlayerWidget extends StatelessWidget {
   final OnPlayerExceptionCallback onPlayerExceptionCallback;
   final OnVideoResolutionReceived onVideoResolutionReceived;
 
-  HlsPlayerController? _controller;
+  HlsPlayerController? controller;
 
   HlsPlayerWidget({
     Key? key,
@@ -59,8 +59,8 @@ class HlsPlayerWidget extends StatelessWidget {
   }
 
   void _onPlatformViewCreated(int id) {
-
-    _controller = HlsPlayerController(
+    print('@@@@@ _onPlatformViewCreated $id');
+    controller = HlsPlayerController(
         id,
         onViewCreated: onViewCreated,
         onRenderedFirstFrame: onRenderedFirstFrame,
@@ -74,7 +74,7 @@ class HlsPlayerWidget extends StatelessWidget {
     //_controller?.setFitMode(fitMode);
     //_controller?.setVideoQuality(quality);
 
-    onViewCreated.call(_controller!);
+    onViewCreated.call(controller!);
   }
 
 }
