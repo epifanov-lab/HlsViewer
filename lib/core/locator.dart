@@ -23,4 +23,6 @@ void _setupBlocs() {
 
 void resetLocator() {
   locator.resetLazySingleton<SharedPreferencesService>();
+  locator.resetLazySingleton<HlsResourcesCubit>();
+  locator.resetLazySingleton<PlayerCubit>();
 }

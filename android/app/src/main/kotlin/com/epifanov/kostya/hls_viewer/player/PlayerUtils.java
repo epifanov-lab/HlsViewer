@@ -7,7 +7,6 @@ import com.google.android.exoplayer2.source.hls.playlist.HlsPlaylistTracker;
 
 public class PlayerUtils {
 
-
   public static boolean isBehindLiveWindowException(ExoPlaybackException e) {
     if (e.type != ExoPlaybackException.TYPE_SOURCE) {
       return false;

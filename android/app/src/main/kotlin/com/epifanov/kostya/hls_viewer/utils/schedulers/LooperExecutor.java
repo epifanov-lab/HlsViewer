@@ -46,7 +46,7 @@ import java.util.function.Consumer;
  * {@link ScheduledExecutorService} wrapper under android {@link Looper}.
  */
 @SuppressWarnings("NullableProblems")
-final class LooperExecutor
+public final class LooperExecutor
   extends AbstractExecutorService
   implements ScheduledExecutorService {
 

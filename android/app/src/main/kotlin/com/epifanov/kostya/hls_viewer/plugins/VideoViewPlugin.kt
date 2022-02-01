@@ -1,6 +1,7 @@
-package com.webka.app
+package com.epifanov.kostya.hls_viewer.plugins;
 
 import android.content.Context
+import com.epifanov.kostya.hls_viewer.platform_view.PlayerPlatformView
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.FlutterPlugin.FlutterPluginBinding
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
@@ -14,6 +15,7 @@ import io.flutter.plugin.platform.PlatformViewFactory
 class VideoViewPlugin : FlutterPlugin, ActivityAware {
     private val VIEW_TYPE = "VideoView"
     private var pluginBinding: FlutterPluginBinding? = null
+
     override fun onAttachedToEngine(binding: FlutterPluginBinding) {
         println("Native: VideoViewPlugin: onAttachedToEngine: $binding")
         pluginBinding = binding
@@ -27,8 +29,10 @@ class VideoViewPlugin : FlutterPlugin, ActivityAware {
     override fun onAttachedToActivity(activityPluginBinding: ActivityPluginBinding) {
         println("Native: VideoViewPlugin: onAttachedToActivity: $activityPluginBinding")
         pluginBinding!!.platformViewRegistry
-                .registerViewFactory(VIEW_TYPE,
-                        VideoViewFactory(pluginBinding!!.binaryMessenger))
+                .registerViewFactory(
+                        VIEW_TYPE,
+                        VideoViewFactory(pluginBinding!!.binaryMessenger)
+                )
     }
 
     override fun onDetachedFromActivityForConfigChanges() {
@@ -52,7 +56,9 @@ class VideoViewPlugin : FlutterPlugin, ActivityAware {
         println("Native: VideoViewPlugin: registerWith: $registrar")
         registrar.platformViewRegistry()
                 .registerViewFactory(
-                        VIEW_TYPE, VideoViewFactory(registrar.messenger()))
+                        VIEW_TYPE,
+                        VideoViewFactory(registrar.messenger())
+                )
     }
 
     companion object {
@@ -68,16 +74,18 @@ class VideoViewPlugin : FlutterPlugin, ActivityAware {
             registrar.platformViewRegistry()
                     .registerViewFactory(
                             VIEW_TYPE,
-                            VideoViewFactory(registrar.messenger()))
+                            VideoViewFactory(registrar.messenger())
+                    )
         }
     }
 }
 
-class VideoViewFactory(private val messenger: BinaryMessenger) : PlatformViewFactory(StandardMessageCodec.INSTANCE) {
+class VideoViewFactory(private val messenger: BinaryMessenger)
+    : PlatformViewFactory(StandardMessageCodec.INSTANCE) {
+
     override fun create(context: Context, id: Int, o: Any?): PlatformView {
         println("Native: VideoViewFactory: create: $id $messenger")
-        // return PlayerPlatformView(context, messenger, id)
-        throw Exception("not implemented")
+        return PlayerPlatformView(context, messenger, id)
     }
 }
 

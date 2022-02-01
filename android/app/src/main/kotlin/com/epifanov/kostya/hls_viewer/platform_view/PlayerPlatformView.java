@@ -1,13 +1,10 @@
 package com.epifanov.kostya.hls_viewer.platform_view;
 
 import android.content.Context;
-import android.graphics.Bitmap;
-import android.graphics.SurfaceTexture;
-import android.media.MediaFormat;
 import android.os.Handler;
-import android.os.HandlerThread;
 import android.os.Looper;
 import android.util.Pair;
+import android.view.View;
 
 import com.epifanov.kostya.hls_viewer.player.CustomExoPlayer;
 import com.epifanov.kostya.hls_viewer.player.EventListener;
@@ -16,7 +13,6 @@ import com.epifanov.kostya.hls_viewer.player.StreamKey;
 import com.epifanov.kostya.hls_viewer.utils.CommonUtils;
 import com.epifanov.kostya.hls_viewer.utils.schedulers.Schedulers;
 import com.google.android.exoplayer2.C;
-import com.google.android.exoplayer2.ExoPlaybackException;
 import com.google.android.exoplayer2.ExoPlayer;
 import com.google.android.exoplayer2.PlaybackException;
 import com.google.android.exoplayer2.PlaybackParameters;
@@ -30,38 +26,26 @@ import com.google.android.exoplayer2.trackselection.TrackSelectionArray;
 import com.google.android.exoplayer2.video.VideoSize;
 
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Map;
 import java.util.Timer;
-import java.util.TimerTask;
-import java.util.function.Function;
 import java.util.function.Supplier;
 
 import io.flutter.plugin.common.BinaryMessenger;
 import io.flutter.plugin.common.MethodCall;
 import io.flutter.plugin.common.MethodChannel;
+import io.flutter.plugin.platform.PlatformView;
 import reactor.core.publisher.Mono;
-
-import static com.epifanov.kostya.hls_viewer.player.PlayerUtils.isBehindLiveWindowException;
-import static com.epifanov.kostya.hls_viewer.player.PlayerUtils.isPlaylistStuckException;
-import static com.epifanov.kostya.hls_viewer.player.PlayerUtils.isRendererIllegalStateException;
-import static com.epifanov.kostya.hls_viewer.player.PlayerUtils.isUnexpectedIllegalArgumentException;
-import static com.google.android.exoplayer2.Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED;
-import static com.google.android.exoplayer2.Player.TIMELINE_CHANGE_REASON_SOURCE_UPDATE;
 
 /**
  * @author Konstantin Epifanov
  * @since 18.02.2020
  */
 public class PlayerPlatformView
-  implements MethodChannel.MethodCallHandler, Player.Listener,
-    EventListener, AnalyticsListener, CustomExoPlayer.OutputFormatListener {
+  implements PlatformView, MethodChannel.MethodCallHandler,
+  Player.Listener, EventListener, AnalyticsListener {
 
   private final String PLAYER_EVENT = "player_event";
   private final String PLAYER_EXCEPTION = "player_exception";
@@ -74,10 +58,10 @@ public class PlayerPlatformView
   private final String VIEW_TYPE = "VideoView";
   private final MethodChannel mChannel;
 
-  private final CustomExoPlayer mTestPlayer;
+  private final CustomExoPlayer mCustomPlayer;
 
   private final Handler mMainHandler = new Handler(Looper.getMainLooper());
-  private HandlerThread captureFrameThread = new HandlerThread("captureFrameThread");
+
   private StreamKey mStreamKey;
   private boolean mIsFirstFrameRendered = false;
   private Timer mVideoProgressTimer;
@@ -86,25 +70,28 @@ public class PlayerPlatformView
 
   final Context context;
   final BinaryMessenger messenger;
-  final long id;
-  final SurfaceTexture texture;
+  final int id;
 
-  public PlayerPlatformView(Context context, BinaryMessenger messenger, long id, SurfaceTexture texture) {
+  public PlayerPlatformView(Context context, BinaryMessenger messenger, Integer id) {
     this.context = context;
     this.messenger = messenger;
     this.id = id;
-    this.texture = texture;
-    captureFrameThread.start();
 
-    mTestPlayer = new CustomExoPlayer(context, this, this, this, this, true, texture);
+    mCustomPlayer = new CustomExoPlayer(context, this, this, this, true);
     mChannel = new MethodChannel(messenger, VIEW_TYPE + id);
     mChannel.setMethodCallHandler(this);
   }
 
+  @Override
+  public View getView() {
+    return mCustomPlayer.mPlayerView;
+  }
+
+  @Override
   public void dispose() {
     System.out.println(hashCode() + " Native: PlayerPlatformView.dispose (internal)");
     runVideoProgressEmitter(false);
-    mTestPlayer.dispose();
+    mCustomPlayer.dispose();
   }
 
   private void dispose(MethodChannel.Result result) {
@@ -116,7 +103,7 @@ public class PlayerPlatformView
   private void pauseOnPause(MethodCall call) {
     boolean value = (boolean)call.arguments;
     pauseOnPause = value;
-    mTestPlayer.setInitialPlayWhenReady(!value);
+    mCustomPlayer.setInitialPlayWhenReady(!value);
   }
 
   @Override
@@ -135,10 +122,9 @@ public class PlayerPlatformView
       case "getTotalPosition": getTotalPosition(result); break;
       case "getDuration": getDuration(result); break;
       case "getVideoSize": getVideoSize(result); break;
-      case "captureFrame": captureFrame(call, result);break;
+      case "captureFrame": captureFrame(call, result); break;
       case "dispose": dispose(result); break;
       case "pauseOnPause": pauseOnPause(call); break;
-      case "onWidgetSizeChanged": onWidgetSizeChanged(call); break;
       default: result.notImplemented();
     }
   }
@@ -157,7 +143,7 @@ public class PlayerPlatformView
         System.out.println(hashCode() + "Native: PlayerPlatformView.loadHls: call = " + call.arguments);
         FitMode fitMode = FitMode.obtain((String) map.get("fitMode"));
         mStreamKey = new StreamKey(url, fitMode); // TODO load hls with quality/track
-        mTestPlayer.accept(mStreamKey);
+        mCustomPlayer.accept(mStreamKey);
         result.success(null);
       } else result.error("0", hashCode() + " Native: PlayerPlatformView.loadHls: wrong args: " + map, null);
     } else result.error("0", hashCode() + " Native: PlayerPlatformView.loadHls: wrong arg type! " + call.arguments, null);
@@ -174,7 +160,7 @@ public class PlayerPlatformView
         Number mediaId = (Number) map.get("mediaId");
         FitMode fitMode = FitMode.obtain((String) map.get("fitMode"));
         mStreamKey = new StreamKeyWss(url, token, mediaId, fitMode);
-        mTestPlayer.accept(mStreamKey);
+        mCustomPlayer.accept(mStreamKey);
         result.success(null);
       } else result.error("0", hashCode() + " Native: PlayerPlatformView.loadWss: some args are wrong: " + map.toString(), null);
     } else result.error("0", hashCode() + " Native: PlayerPlatformView.loadWss: wrong arg type! " + call.arguments, null);
@@ -184,7 +170,7 @@ public class PlayerPlatformView
     System.out.println(hashCode() + " Native: PlayerPlatformView.setPlayback: call = " + call.arguments);
     if (call.arguments instanceof Boolean) {
       Boolean b = (Boolean) call.arguments;
-      mTestPlayer.setPlayWhenReady(b);
+      mCustomPlayer.setPlayWhenReady(b);
       result.success(null);
     } else result.error("0", hashCode() + " Native: PlayerPlatformView.setPlayback: wrong args: " + call.arguments, null);
   }
@@ -193,7 +179,7 @@ public class PlayerPlatformView
     System.out.println(hashCode() + " Native: PlayerPlatformView.setVolume: call = " + call.arguments);
     if (call.arguments instanceof Double) {
       Double volume = (Double) call.arguments;
-      mTestPlayer.setVolume(volume.floatValue());
+      mCustomPlayer.setVolume(volume.floatValue());
       result.success(null);
     } else result.error("0", hashCode() + " Native: PlayerPlatformView.setVolume: wrong args: " + call.arguments, null);
   }
@@ -205,24 +191,15 @@ public class PlayerPlatformView
       result.success(null);
     } else if (call.arguments instanceof String) {
       FitMode fitMode = FitMode.obtain((String) call.arguments);
-      mTestPlayer.setFitMode(fitMode);
+      mCustomPlayer.setFitMode(fitMode);
       result.success(null);
     } else result.error("0", hashCode() + " Native: PlayerPlatformView.setFitMode: wrong args: " + call.arguments, null);
-  }
-
-  private void onWidgetSizeChanged(MethodCall call) {
-    //System.out.println(hashCode() + " Native: PlayerPlatformView.onWidgetSizeChanged: call = " + call.arguments);
-    if (call.arguments instanceof Map) {
-      int width = (int) Math.round((double) ((Map) call.arguments).get("width"));
-      int height = (int) Math.round((double) ((Map) call.arguments).get("height"));
-      mTestPlayer.onWidgetSizeChanged(width, height);
-    }
   }
 
   private void seekTo(MethodCall call, MethodChannel.Result result) {
     if (call.arguments instanceof Number) {
       Number posMs = (Number) call.arguments;
-      mTestPlayer.seekTo(posMs.longValue());
+      mCustomPlayer.seekTo(posMs.longValue());
       result.success(null);
     } else result.error("0", hashCode() + " Native: PlayerPlatformView.seekTo: wrong args: " + call.arguments, null);
   }
@@ -231,7 +208,7 @@ public class PlayerPlatformView
     //System.out.println(hashCode() + " Native: PlayerPlatformView.setPlaybackRate: call = " + call.arguments);
     if (call.arguments instanceof Number) {
       Number posMs = (Number) call.arguments;
-      mTestPlayer.setPlaybackRate(posMs.floatValue());
+      mCustomPlayer.setPlaybackRate(posMs.floatValue());
       result.success(null);
     } else result.error("0", hashCode() + " Native: PlayerPlatformView.seekTo: wrong args: " + call.arguments, null);
   }
@@ -243,14 +220,14 @@ public class PlayerPlatformView
       result.success(null);
     } else if (call.arguments instanceof Number) {
       Number level = (Number) call.arguments;
-      mTestPlayer.setVideoQuality(level.intValue());
+      mCustomPlayer.setVideoQuality(level.intValue());
       result.success(null);
     } else result.error("0", hashCode() + " Native: PlayerPlatformView.setVideoQuality: wrong args: " + call.arguments, null);
   }
 
   private void getCurrentPosition(MethodChannel.Result result) {
     //System.out.println(hashCode() + " Native: PlayerPlatformView.getCurrentPosition: result = " + result);
-    getThreadSafePlayerOperation(mTestPlayer::getCurrentPosition)
+    getThreadSafePlayerOperation(mCustomPlayer::getCurrentPosition)
       .subscribe(result::success, (e) -> result.error("-1", e.getMessage(), null));
 
     /*try {
@@ -263,7 +240,7 @@ public class PlayerPlatformView
 
   private void getTotalPosition(MethodChannel.Result result) {
     //System.out.println(hashCode() + " Native: PlayerPlatformView.getTotalPosition: result = " + result);
-    getThreadSafePlayerOperation(mTestPlayer::getTotalPosition)
+    getThreadSafePlayerOperation(mCustomPlayer::getTotalPosition)
       .subscribe(result::success, (e) -> result.error("-1", e.getMessage(), null));
 
     /*try {
@@ -276,7 +253,7 @@ public class PlayerPlatformView
 
   private void getDuration(MethodChannel.Result result) {
     //System.out.println(hashCode() + " Native: PlayerPlatformView.getDuration: result = " + result);
-    getThreadSafePlayerOperation(mTestPlayer::getDuration)
+    getThreadSafePlayerOperation(mCustomPlayer::getDuration)
       .subscribe(result::success, (e) -> result.error("-1", e.getMessage(), null));
 
     /*try {
@@ -289,7 +266,7 @@ public class PlayerPlatformView
 
   private void getVideoSize(MethodChannel.Result result) {
     //System.out.println(hashCode() + " Native: PlayerPlatformView.getVideoSize: result = " + result);
-    getThreadSafePlayerOperation(mTestPlayer::getVideoSize)
+    getThreadSafePlayerOperation(mCustomPlayer::getVideoSize)
       .map((o) -> (Integer[]) o)
       .map(sizeArray -> CommonUtils.hashMapOf(new Pair<>("width", sizeArray[0]), new Pair<>("height", sizeArray[1])))
       .subscribe(result::success);
@@ -312,107 +289,30 @@ public class PlayerPlatformView
       //.transform(Schedulers::work_main);
   }
 
-  private void reportSuccessFromMain(MethodChannel.Result result, @Nullable Object value) {
-    mMainHandler.post(new Runnable() {
-      @Override
-      public void run() {
-        result.success(value);
-      }
-    });
-  }
-
-  private void reportErrorFromMain(MethodChannel.Result result, String errorCode,
-                                   @androidx.annotation.Nullable String errorMessage,
-                                   @androidx.annotation.Nullable Object errorDetails) {
-    mMainHandler.post(new Runnable() {
-      @Override
-      public void run() {
-        result.error(errorCode, errorMessage, errorDetails);
-      }
-    });
-  }
-
   private void captureFrame(MethodCall call, MethodChannel.Result result) {
     //System.out.println(hashCode() + " Native: PlayerPlatformView.captureFrame: call = " + call.arguments);
-    if (call.arguments instanceof String) {
+    /*if (call.arguments instanceof String) {
       try {
-        mTestPlayer.captureFrame(new Function<Bitmap, Integer>() {
-          @Override
-          public Integer apply(Bitmap b) {
-            if (b == null) {
-              String err = hashCode() + " Native: PlayerPlatformView.captureFrame: view error! mSizes is null.";
-              reportErrorFromMain(result, "0", err, null);
-              return 1;
-            }
-            File file = new File(call.arguments.toString());
-            try {
-              OutputStream stream = new FileOutputStream(file);
-              b.compress(Bitmap.CompressFormat.PNG, 100, stream);
-              reportSuccessFromMain(result, null);
-              b.recycle();
-            } catch (Exception e) {
-              reportErrorFromMain(result, e.getClass().getSimpleName(), e.getMessage(), null);
-            }
-            return 0;
-          }
-        }, new Handler(captureFrameThread.getLooper()));
-
+        Bitmap b = mCustomPlayer.captureFrame();
+        if (b == null) {
+          String err = hashCode() + " Native: PlayerPlatformView.captureFrame: view error! mSizes is null.";
+          result.error("0", err, null); return;
+        }
+        File file = new File(call.arguments.toString());
+        OutputStream stream = new FileOutputStream(file);
+        b.compress(Bitmap.CompressFormat.PNG, 100, stream);
+        result.success(null);
+        b.recycle();
       } catch (Exception e) {
-        reportErrorFromMain(result, e.getClass().getSimpleName(), e.getMessage(), null);
+        result.error(e.getClass().getSimpleName(), e.getMessage(), null);
       }
-    } else {
-      reportErrorFromMain(result, "0", hashCode() + " Native: PlayerPlatformView.captureFrame: wrong args: "
-              + call.arguments, null);
-    }
+    } else result.error("0", hashCode() + " Native: PlayerPlatformView.captureFrame: wrong args: "
+        + call.arguments, null);*/
   }
 
-  //region TestExoPlayer.OutputFormatListener
-
-  private static final String KEY_CROP_LEFT = "crop-left";
-  private static final String KEY_CROP_RIGHT = "crop-right";
-  private static final String KEY_CROP_BOTTOM = "crop-bottom";
-  private static final String KEY_CROP_TOP = "crop-top";
-
-  @Override
-  public void onOutputFormatChanged(MediaFormat format) {
-    System.out.println(hashCode() + " TestExoPlayer.onOutputFormatChanged: " + format);
-    final int width = format.getInteger(MediaFormat.KEY_WIDTH);
-    final int height = format.getInteger(MediaFormat.KEY_HEIGHT);
-
-    boolean hasCrop =
-            format.containsKey(KEY_CROP_RIGHT)
-                    && format.containsKey(KEY_CROP_LEFT)
-                    && format.containsKey(KEY_CROP_BOTTOM)
-                    && format.containsKey(KEY_CROP_TOP);
-    final int croppedWidth =
-            hasCrop
-                    ? format.getInteger(KEY_CROP_RIGHT)
-                    - format.getInteger(KEY_CROP_LEFT)
-                    + 1
-                    : width;
-    final int croppedHeight =
-            hasCrop
-                    ? format.getInteger(KEY_CROP_BOTTOM)
-                    - format.getInteger(KEY_CROP_TOP)
-                    + 1
-                    : height;
-    mMainHandler.post(() -> {
-      mChannel.invokeMethod(PLAYER_EVENT,
-        CommonUtils.hashMapOf(
-          new Pair<>(TYPE, "onCropData"),
-          new Pair<>(DATA, CommonUtils.hashMapOf(
-            new Pair<>("width", width),
-            new Pair<>("height", height),
-            new Pair<>("croppedWidth", croppedWidth),
-            new Pair<>("croppedHeight", croppedHeight)))
-        ));
-    });
-  }
-
-  //endregion TestExoPlayer.OutputFormatListener
   //region VideoListener
   @Override
-  public void onVideoSizeChanged(VideoSize videoSize) {
+  public void onVideoSizeChanged(EventTime eventTime, VideoSize videoSize) {
     System.out.println(hashCode() + " Native: PlayerPlatformView, onVideoSizeChanged " +
       "width = " + videoSize.width + ", height = " + videoSize.height);
 
@@ -428,7 +328,7 @@ public class PlayerPlatformView
   }
 
   @Override
-  public void onSurfaceSizeChanged(int width, int height) {
+  public void onSurfaceSizeChanged(EventTime eventTime, int width, int height) {
     System.out.println(hashCode() + " Native: PlayerPlatformView, VideoListener.onSurfaceSizeChanged: w" + width + " h" + height);
     mMainHandler.post(() -> mChannel.invokeMethod(PLAYER_EVENT, CommonUtils.hashMapOf(
       new Pair<>(TYPE, "onSurfaceSizeChanged"),
@@ -438,51 +338,51 @@ public class PlayerPlatformView
   }
 
   @Override
-  public void onRenderedFirstFrame() {
+  public void onRenderedFirstFrame(EventTime eventTime, Object output, long renderTimeMs) {
     System.out.println("PlayerPlatformView.onRenderedFirstFrame");
     mMainHandler.post(this::sendOnRenderedFirstFrameEvent);
   }
 
   private void sendOnRenderedFirstFrameEvent() {
     System.out.println(hashCode() + " Native: PlayerPlatformView.sendOnRenderedFirstFrameEvent");
-    mIsFirstFrameRendered = true;
-    mChannel.invokeMethod(PLAYER_EVENT, CommonUtils.hashMapOf(new Pair<>(TYPE, "onRenderedFirstFrame")));
+    if (!mIsFirstFrameRendered) {
+      mIsFirstFrameRendered = true;
+      mChannel.invokeMethod(PLAYER_EVENT, CommonUtils.hashMapOf(new Pair<>(TYPE, "onRenderedFirstFrame")));
+    }
   }
   //endregion VideoListener
 
 
   @Override
-  public void onPlayerError(PlaybackException error) {
+  public void onPlayerError(EventTime eventTime, PlaybackException error) {
     System.out.println(hashCode() + " Native: PlayerPlatformView, EventListener.onPlayerError: " + error.getMessage());
-
-    ExoPlaybackException exoError = (ExoPlaybackException) error;
-
-    if ( isBehindLiveWindowException(exoError)
-      || isPlaylistStuckException(exoError)
-      || isUnexpectedIllegalArgumentException(exoError)
-      || isRendererIllegalStateException(exoError)
-      /*|| isParserException(error)*/) {
-      mTestPlayer.recreate();
+    /*
+    if ( isBehindLiveWindowException(error)
+      || isPlaylistStuckException(error)
+      || isUnexpectedIllegalArgumentException(error)
+      || isRendererIllegalStateException(error)
+      *//*|| isParserException(error)*//*) {
+      mCustomPlayer.recreate();
     }
 
-    Map<String, Object> args = CommonUtils.hashMapOf(new Pair<>("code", (exoError).type));
+    Map<String, Object> args = CommonUtils.hashMapOf(new Pair<>("code", error.type));
     args.put(STACKTRACE, CommonUtils.stacktraceToString(error));
 
     String type = null;
-    switch ((exoError).type) {
+    switch (error.type) {
       case ExoPlaybackException.TYPE_SOURCE:
         type = "TYPE_SOURCE";
-        args.put(MESSAGE, (exoError).getSourceException().getClass().getSimpleName());
+        args.put(MESSAGE, error.getSourceException().getClass().getSimpleName());
         break;
 
       case ExoPlaybackException.TYPE_RENDERER:
         type = "TYPE_RENDERER";
-        args.put(MESSAGE, (exoError).getRendererException().getClass().getSimpleName());
+        args.put(MESSAGE, error.getRendererException().getClass().getSimpleName());
         break;
 
       case ExoPlaybackException.TYPE_UNEXPECTED:
         type = "TYPE_UNEXPECTED";
-        args.put(MESSAGE, (exoError).getUnexpectedException().getClass().getSimpleName());
+        args.put(MESSAGE, error.getUnexpectedException().getClass().getSimpleName());
         break;
 
       case ExoPlaybackException.TYPE_REMOTE:
@@ -493,6 +393,7 @@ public class PlayerPlatformView
     type += ' ' + error.getClass().getSimpleName();
     args.put(TYPE, type);
     mMainHandler.post(() -> mChannel.invokeMethod(PLAYER_EXCEPTION, args));
+    */
   }
 
   @Override
@@ -540,35 +441,40 @@ public class PlayerPlatformView
   }
 
   private void notifyDuration() {
-    final long newDuration = mTestPlayer.getDuration();
+    final long newDuration = mCustomPlayer.getDuration();
     if (newDuration != C.TIME_UNSET && duration == newDuration) {
       return;
     }
     duration = newDuration;
-    mMainHandler.post(() -> mChannel.invokeMethod("onDuration", mTestPlayer.getDuration()));
+    mMainHandler.post(() -> mChannel.invokeMethod("onDuration", mCustomPlayer.getDuration()));
   }
 
   //region EventListener
   @Override
-  public void onTimelineChanged(@NotNull Timeline timeline, int reason) {
+  public void onTimelineChanged(Timeline timeline, int reason) {
     mMainHandler.post(() -> {
       Map<String, Object> arg = CommonUtils.hashMapOf(
         new Pair<>("reason", reason),
         new Pair<>("other_data", NOT_IMPLEMENTED)
       );
 
-      switch (reason) {
-        case TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED:
-          arg.put("reason_desc", "TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED");
+      /*switch (reason) {
+        case Player.TIMELINE_CHANGE_REASON_PREPARED:
+          arg.put("reason_desc", "TIMELINE_CHANGE_REASON_PREPARED");
           break;
 
-        case TIMELINE_CHANGE_REASON_SOURCE_UPDATE:
-          arg.put("reason_desc", "TIMELINE_CHANGE_REASON_SOURCE_UPDATE");
+        case Player.TIMELINE_CHANGE_REASON_RESET:
+          arg.put("reason_desc", "TIMELINE_CHANGE_REASON_RESET");
           break;
 
-      }
+        case Player.TIMELINE_CHANGE_REASON_DYNAMIC:
+          arg.put("reason_desc", "TIMELINE_CHANGE_REASON_DYNAMIC");
+          break;
 
-      mChannel.invokeMethod(PLAYER_EVENT, CommonUtils.hashMapOf(new Pair<>(TYPE, "onTimelineChanged"),
+      }*/
+
+      mChannel.invokeMethod(PLAYER_EVENT,
+        CommonUtils.hashMapOf(new Pair<>(TYPE, "onTimelineChanged"),
         new Pair<>(DATA, arg)));
     });
   }
@@ -595,7 +501,7 @@ public class PlayerPlatformView
       mMainHandler.post(() -> mChannel.invokeMethod("onPlay", null));
     } else {
       if (pauseOnPause) {
-        mTestPlayer.setPlayWhenReady(false);
+        mCustomPlayer.setPlayWhenReady(false);
       }
       mMainHandler.post(() -> mChannel.invokeMethod("onPause", null));
       // Not playing because playback is paused, ended, suppressed, or the player
@@ -643,24 +549,24 @@ public class PlayerPlatformView
 
   @Override
   public void onSeekProcessed() {
-    final long currentPosition = mTestPlayer.getCurrentPosition();
-    final long bufferedEnd = mTestPlayer.getTotalBufferedDuration() + currentPosition;
+    final long currentPosition = mCustomPlayer.getCurrentPosition();
+    final long bufferedEnd = mCustomPlayer.getTotalBufferedDuration() + currentPosition;
     final ArrayList<long[]> range = new ArrayList<long[]>(Collections.singleton(new long[]{currentPosition, bufferedEnd}));
     mMainHandler.post(() -> mChannel.invokeMethod("onLoadedRanges", range));
     mMainHandler.post(() -> mChannel.invokeMethod("onCurrentTime", currentPosition));
-    mMainHandler.post(() -> mChannel.invokeMethod("onSeek", mTestPlayer.getCurrentPosition()));
+    mMainHandler.post(() -> mChannel.invokeMethod("onSeek", mCustomPlayer.getCurrentPosition()));
     mMainHandler.post(() -> mChannel.invokeMethod(PLAYER_EVENT, CommonUtils.hashMapOf(new Pair<>(TYPE, "onSeekProcessed"))));
     mChannel.invokeMethod(PLAYER_EVENT,
             CommonUtils.hashMapOf(new Pair<>(TYPE, "onProgressChanged"),
                     new Pair<>(DATA, CommonUtils.hashMapOf(new Pair<>("currentPosition", currentPosition)))));
   }
 
-  @Override
+  /*@Override
   public void onHlsMediaPlaylistParserEvent(Map<String, Object> map) {
     Map<String, Object> arg = CommonUtils.hashMapOf(new Pair<>(TYPE, "onHlsMediaPlaylistParserEvent"));
     map.forEach(arg::put);
     mMainHandler.post(() -> mChannel.invokeMethod(PLAYER_EVENT, arg));
-  }
+  }*/
   //endregion
 
   //region AnalyticsListener
@@ -669,26 +575,28 @@ public class PlayerPlatformView
     if (mediaLoadData.dataType != C.DATA_TYPE_MEDIA) {
       return;
     }
-    if (!mTestPlayer.hasTimeline()) {
+    if (!mCustomPlayer.hasTimeline()) {
       return;
     }
-    final long currentPosition = mTestPlayer.getCurrentPosition();
-    final long bufferedEnd = mTestPlayer.getTotalBufferedDuration() + currentPosition;
+    final long currentPosition = mCustomPlayer.getCurrentPosition();
+    final long bufferedEnd = mCustomPlayer.getTotalBufferedDuration() + currentPosition;
     final ArrayList<long[]> range = new ArrayList<long[]>(Collections.singleton(new long[]{currentPosition, bufferedEnd}));
     mMainHandler.post(() -> mChannel.invokeMethod("onLoadedRanges", range));
   }
+
   //endregion
 
   private void runVideoProgressEmitter(boolean start) {
     System.out.println(hashCode() + " Native: PlayerPlatformView.runVideoProgressEmitter: start = " + start);
-    if (!start && mVideoProgressTimer == null) return;
+   /* if (!start && mVideoProgressTimer == null) return;
+    else if (start && !mCustomPlayer.isVod()) return;
     else if (mVideoProgressTimer == null) mVideoProgressTimer = new Timer();
     if (start) {
       mVideoProgressTimer.scheduleAtFixedRate(
         new TimerTask() {
           @Override
           public void run() {
-            getThreadSafePlayerOperation(mTestPlayer::getCurrentPosition)
+            getThreadSafePlayerOperation(mCustomPlayer::getCurrentPosition)
               .map((o) -> (Long) o)
               .filter(pos -> pos > 0).subscribe((currentPosition) -> {
               mChannel.invokeMethod("onCurrentTime", currentPosition);
@@ -701,7 +609,7 @@ public class PlayerPlatformView
     } else {
       mVideoProgressTimer.cancel();
       mVideoProgressTimer = null;
-    }
+    }*/
   }
 
 }
